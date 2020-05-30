@@ -37,8 +37,14 @@ namespace KMLtoMap
             string priority = Console.ReadLine();
             Console.WriteLine("Center:");
             string center = Console.ReadLine();
-            Console.WriteLine("Line Pattern:");
-            string pattern = Console.ReadLine();
+            Console.WriteLine("Line or Infill? (l/i)? ");
+            bool infill = Console.ReadKey().KeyChar == 'i';
+            string pattern = "";
+            if (!infill)
+            {
+                Console.WriteLine("Line Pattern:");
+                pattern = Console.ReadLine();
+            }
             Console.WriteLine("Weld Nearby Coordinates (y/n)?");
             bool weld = Console.ReadKey().KeyChar == 'y';
             Console.WriteLine("Add Placemark name as a label at polygon center (y/n)? ");
@@ -87,8 +93,12 @@ namespace KMLtoMap
                         xml.WriteEndElement();
                     }
 
-                    xml.WriteStartElement("Line");
-                    xml.WriteAttributeString("Pattern", pattern);
+                    if(infill)
+                        xml.WriteStartElement("Infill");
+                    else
+                        xml.WriteStartElement("Line");
+                    if(pattern != "")
+                        xml.WriteAttributeString("Pattern", pattern);
                     xml.WriteAttributeString("Name", mark.Name);
                     xml.WriteStartElement("Point");
                     for (int i = 0; i < line.Coordinates.Count; i++)
@@ -122,11 +132,15 @@ namespace KMLtoMap
                         xml.WriteEndElement();
                     }
 
-                    xml.WriteStartElement("Line");
-                    xml.WriteAttributeString("Pattern", pattern);
+                    if (infill)
+                        xml.WriteStartElement("Infill");
+                    else
+                        xml.WriteStartElement("Line");
+                    if (pattern != "")
+                        xml.WriteAttributeString("Pattern", pattern);
                     xml.WriteAttributeString("Name", mark.Name);
                     xml.WriteStartElement("Point");
-                    for(int i = 0; i< poly.OuterBoundary.LinearRing.Coordinates.Count; i++)
+                    for (int i = 0; i< poly.OuterBoundary.LinearRing.Coordinates.Count; i++)
                     {
                         Coordinate c = new Coordinate(poly.OuterBoundary.LinearRing.Coordinates.ElementAt(i));
                         Coordinate collapse = previousCoordinates.FirstOrDefault(pc => Conversions.CalculateDistance(pc, c) < SMALL_RADIUS);
