@@ -1,4 +1,4 @@
-##To create Infill or Line maps from KMZ##
+#To create Infill or Line maps from KMZ
 
 1. Open KMZ in google earth
 2. Right click on the polygon or line element you wish to convert and click Save As
