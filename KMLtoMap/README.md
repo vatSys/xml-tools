@@ -5,4 +5,4 @@
 3. Save the element as a **.KML** file in the directory of `KMLtoMap.exe`
 4. Launch `KMLtoMap.exe` and follow the prompts. Refer to https://github.com/sawbe/vatsys-australia-dataset Maps README for answers to prompts.
 5. Repeat steps 2-4 for other desired elements.
-5. Merge the separate XML files generated into the one desired `<Map>` (again, refer to https://github.com/sawbe/vatsys-australia-dataset)
+5. Merge the separate XML files generated into the one desired file under `<Maps>` (again, refer to https://github.com/sawbe/vatsys-australia-dataset for example)
