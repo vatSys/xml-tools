@@ -65,7 +65,10 @@ namespace KMLtoMap
             xml.WriteAttributeString("Center", center);
 
             List<Coordinate> previousCoordinates = new List<Coordinate>();
-            foreach (Placemark mark in doc.Features.OfType<Folder>().First().Features.OfType<Placemark>())
+            List<Placemark> marks = doc.Features.OfType<Placemark>().ToList();
+            foreach (Folder f in doc.Features.OfType<Folder>())
+                marks.AddRange(f.Features.OfType<Placemark>());
+            foreach (Placemark mark in marks)
             {
                 foreach(Point point in mark.Flatten().OfType<Point>())
                 {
@@ -113,7 +116,7 @@ namespace KMLtoMap
                         if (i == line.Coordinates.Count - 1)
                             xml.WriteString(c.ToString("ISO"));
                         else
-                            xml.WriteString(c.ToString("ISO/"));
+                            xml.WriteString(c.ToString("ISO/") + Environment.NewLine);
                     }
                     xml.WriteEndElement();
                     xml.WriteEndElement();
@@ -152,7 +155,7 @@ namespace KMLtoMap
                         if (i == poly.OuterBoundary.LinearRing.Coordinates.Count - 1)
                             xml.WriteString(c.ToString("ISO"));
                         else
-                            xml.WriteString(c.ToString("ISO/"));
+                            xml.WriteString(c.ToString("ISO/") + Environment.NewLine);
                     }
                     xml.WriteEndElement();
                     xml.WriteEndElement();

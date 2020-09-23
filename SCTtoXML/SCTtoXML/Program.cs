@@ -40,7 +40,8 @@ namespace SCTtoXML
             if (Console.ReadLine() == "y")
                 DoAirports(fname, file);
 
-            Console.Read();
+            Console.WriteLine("Finished. Press any key to exit");
+            Console.ReadKey();
         }
 
         static void DoAirports(string fname, List<string> file)
@@ -344,7 +345,12 @@ namespace SCTtoXML
             XmlElement maps = (XmlElement)doc.AppendChild(doc.CreateElement("Maps"));
             XmlElement map = (XmlElement)maps.AppendChild(doc.CreateElement("Map"));
 
-            List<string> slines = geo.FindAll(s => s.Contains("coast")).ToList();
+            Console.WriteLine("Filter by colour? (Enter Colour Name): ");
+            string colour = Console.ReadLine();
+            List<string> slines = geo;
+            if (!string.IsNullOrEmpty(colour))
+                slines = geo.FindAll(s => s.Contains(colour)).ToList();
+
             for (int i = 0; i < slines.Count; i++)
             {
                 string[] ss = slines[i].Trim().Split(' ');
@@ -352,8 +358,6 @@ namespace SCTtoXML
                     continue;
 
                 XmlElement line = (XmlElement)map.AppendChild(doc.CreateElement("Line"));
-                line.SetAttribute("Name", "Coastline");
-
                 line.InnerText += ConvertSectorLatLonToISO(ss[0]);
                 line.InnerText += ConvertSectorLatLonToISO(ss[1]);
                 line.InnerText += "/";
