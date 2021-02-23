@@ -24,31 +24,295 @@ namespace SCTtoXML
             List<string> file = File.ReadLines(fname).ToList();
             Console.WriteLine(file.Count.ToString());
 
-            Console.WriteLine("Do Geo? (y/n)");
+            Console.WriteLine("Do Airspace? (y/n)");
+            if (Console.ReadLine() == "y")
+                DoAirspace(file);
+
+            Console.WriteLine("Do Sector from ARTCC? (y/n)");
+            if (Console.ReadLine() == "y")
+                DoSector(fname, file);
+
+            Console.WriteLine("Do Geo Map? (y/n)");
             if (Console.ReadLine() == "y")
                 DoGeo(fname, file);
 
-            Console.WriteLine("Do Intersections? (y/n)");
+            Console.WriteLine("Do Airspace Maps? (y/n)");
             if (Console.ReadLine() == "y")
-                DoInts(fname, file);
-
-            Console.WriteLine("Do Airways? (y/n)");
-            if (Console.ReadLine() == "y")
-                DoAirways(fname, file);
-
-            Console.WriteLine("Do Airports? (y/n)");
-            if (Console.ReadLine() == "y")
-                DoAirports(fname, file);
+                DoAirspaceMaps(fname, file);
 
             Console.WriteLine("Finished. Press any key to exit");
             Console.ReadKey();
         }
 
-        static void DoAirports(string fname, List<string> file)
+        static void DoSector(string fname, List<string> file)
+        {
+            fname = fname.Substring(0, fname.IndexOf('.'));
+            List<string> info = GetSection(file, "[INFO]").Where(s => s.Length > 0 && s[0] != ';').ToList();
+            string callsign = info[1];
+
+            List<string> artcc = GetSection(file, "[ARTCC]");
+
+            List<PointPair> unordered = new List<PointPair>();
+
+            foreach (var line in artcc)
+            {
+                string[] ss = line.Split(' ');
+                int start = 0;
+                if (ss.Length > 4)
+                    start++;
+
+                unordered.Add(new PointPair(ConvertSectorLatLonToISO(ss[start]) + ConvertSectorLatLonToISO(ss[start + 1]), ConvertSectorLatLonToISO(ss[start + 2]) + ConvertSectorLatLonToISO(ss[start + 3])));
+            }
+
+            List<PointPair> ordered = new List<PointPair>();
+            List<PointPair> cantFit = new List<PointPair>();
+
+            ordered.Add(unordered[0]);//start with first item
+
+            for (int i = 1; i < unordered.Count; i++)
+            {
+                if (InsertPoint(unordered[i], ordered, cantFit))
+                {
+                    bool testCants = true;
+                    while (testCants)
+                    {
+                        testCants = false;
+                        for (int j = 0; j < cantFit.Count; j++)
+                        {
+                            if (InsertPoint(cantFit[j], ordered, cantFit))
+                            {
+                                j--;
+                                testCants = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            ordered.Reverse();
+
+            XmlDocument volDoc = new XmlDocument();
+            var vols = volDoc.AppendChild(volDoc.CreateElement("Volumes"));
+            var bdry = vols.AppendChild(volDoc.CreateElement("Boundary"));
+            ((XmlElement)bdry).SetAttribute("Name", fname);
+            bdry.InnerText = string.Join("/"+Environment.NewLine, ordered.Select(s => s.p1));
+            var vol = (XmlElement)vols.AppendChild(volDoc.CreateElement("Volume"));
+            vol.SetAttribute("Name", fname);
+            vol.SetAttribute("LowerLimit", "0");
+            vol.SetAttribute("UpperLimit", "99999");
+            var volBdrys = vol.AppendChild(volDoc.CreateElement("Boundaries"));
+            volBdrys.InnerText = fname;
+
+            XmlTextWriter writer = new XmlTextWriter("Volumes.xml", null);
+            writer.Formatting = Formatting.Indented;
+            volDoc.Save(writer);
+
+            XmlDocument secDoc = new XmlDocument();
+            var sectors = secDoc.AppendChild(secDoc.CreateElement("Sectors"));
+            var sector = (XmlElement)sectors.AppendChild(secDoc.CreateElement("Sector"));
+            sector.SetAttribute("Name", fname);
+            sector.SetAttribute("Callsign", callsign);
+            var secVols = sector.AppendChild(secDoc.CreateElement("Volumes"));
+            secVols.InnerText = fname;
+
+            writer = new XmlTextWriter("Sectors.xml", null);
+            writer.Formatting = Formatting.Indented;
+            secDoc.Save(writer);
+        }
+
+        static void DoAirspaceMaps(string fname, List<string> file)
+        {
+            fname = fname.Substring(0, fname.IndexOf('.'));
+            List<string> info = GetSection(file, "[INFO]").Where(s=>s.Length > 0 && s[0] != ';').ToList();
+            string centre = ConvertSectorLatLonToISO(info[3]) + ConvertSectorLatLonToISO(info[4]);
+
+            XmlDocument doc = new XmlDocument();
+            var maps = doc.AppendChild(doc.CreateElement("Maps"));
+
+            var symbolNode = doc.CreateElement("Map");
+            symbolNode.SetAttribute("Type", "System");
+            symbolNode.SetAttribute("Name", $"{fname}_AIRSPACE");
+            symbolNode.SetAttribute("Center", centre);
+            symbolNode.SetAttribute("Priority", "2");
+
+            var labelNode = doc.CreateElement("Map");
+            labelNode.SetAttribute("Type", "System");
+            labelNode.SetAttribute("Name", $"{fname}_NAMES");
+            labelNode.SetAttribute("Center", centre);
+            labelNode.SetAttribute("Priority", "1");
+
+            DoAirportMaps(doc, symbolNode, labelNode, file);
+            DoIntsMaps(doc, symbolNode, labelNode, file);
+            DoARTCCMaps(doc, symbolNode, file);
+
+            maps.AppendChild(symbolNode);
+            maps.AppendChild(labelNode);
+
+            XmlTextWriter writer = new XmlTextWriter($"{fname}_AIRSPACE.xml", null);
+            writer.Formatting = Formatting.Indented;
+            doc.Save(writer);
+        }
+
+        static void DoAirportMaps(XmlDocument doc, XmlNode symbolMap, XmlNode labelMap, List<string> file)
         {
             List<string> airportS = GetSection(file, "[AIRPORT]");
+
+            var symbolNode = (XmlElement)symbolMap?.AppendChild(doc.CreateElement("Symbol"));
+            symbolNode?.SetAttribute("Type", "Reticle");
+
+            var labelNode = (XmlElement)labelMap?.AppendChild(doc.CreateElement("Label"));
+            labelNode?.SetAttribute("HasLeader", "true");
+
+            foreach (string line in airportS)
+            {
+                string portline = new string(line.Trim().TakeWhile(c => c != ';').ToArray());
+                if (portline.Length <= 0)
+                    continue;
+
+                string[] port = portline.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                //AYDU 000.000 S009.05.11.760 E143.12.29.459  C ; DARU
+                if (port.Length != 5)
+                    continue;
+
+                var p = doc.CreateElement("Point");
+                p.InnerText = port[0];
+                var p2 = doc.CreateElement("Point");
+                p2.InnerText = port[0];
+                symbolNode?.AppendChild(p);
+                labelNode?.AppendChild(p2);
+            }
+        }
+
+        static void DoIntsMaps(XmlDocument doc, XmlNode symbols, XmlNode labels, List<string> file)
+        {
+            List<string> ints = GetSection(file, "[FIXES]");
+
+            var symbolNode = (XmlElement)symbols?.AppendChild(doc.CreateElement("Symbol"));
+            symbolNode?.SetAttribute("Type", "HollowTriangle");
+
+            var labelNode = (XmlElement)labels?.AppendChild(doc.CreateElement("Label"));
+            labelNode?.SetAttribute("HasLeader", "true");
+
+            foreach (string line in ints)
+            {
+                string fixline = new string(line.Trim().TakeWhile(c => c != ';').ToArray());
+                if (fixline.Length <= 0)
+                    continue;
+
+                string[] fix = fixline.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (fix.Length != 3)
+                    continue;
+
+                var p = doc.CreateElement("Point");
+                p.InnerText = fix[0];
+                var p2 = doc.CreateElement("Point");
+                p2.InnerText = fix[0];
+                symbolNode?.AppendChild(p);
+                labelNode?.AppendChild(p2);
+            }
+
+            symbolNode = (XmlElement)symbols?.AppendChild(doc.CreateElement("Symbol"));
+            symbolNode?.SetAttribute("Type", "DotFillCircle");
+
+            ints = GetSection(file, "[NDB]");
+            foreach (string line in ints)
+            {
+                string fixline = new string(line.Trim().TakeWhile(c => c != ';').ToArray());
+                if (fixline.Length <= 0)
+                    continue;
+
+                string[] fix = fixline.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (fix.Length != 4)
+                    continue;
+
+                var p = doc.CreateElement("Point");
+                p.InnerText = fix[0] + " NDB";
+                var p2 = doc.CreateElement("Point");
+                p2.InnerText = fix[0] + " NDB";
+                symbolNode?.AppendChild(p);
+                labelNode?.AppendChild(p2);
+            }
+
+            symbolNode = (XmlElement)symbols?.AppendChild(doc.CreateElement("Symbol"));
+            symbolNode?.SetAttribute("Type", "Hexagon");
+
+            ints = GetSection(file, "[VOR]");
+            foreach (string line in ints)
+            {
+                string fixline = new string(line.Trim().TakeWhile(c => c != ';').ToArray());
+                if (fixline.Length <= 0)
+                    continue;
+
+                string[] fix = fixline.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (fix.Length != 4)
+                    continue;
+
+                var p = doc.CreateElement("Point");
+                p.InnerText = fix[0] + " VOR";
+                var p2 = doc.CreateElement("Point");
+                p2.InnerText = fix[0] + " VOR";
+                symbolNode?.AppendChild(p);
+                labelNode?.AppendChild(p2);
+            }
+        }
+
+        static void DoARTCCMaps(XmlDocument doc, XmlNode map, List<string> file)
+        {
+            List<string> artcc = GetSection(file, "[ARTCC]");
+            foreach(var line in artcc)
+            {
+                string[] ss = line.Split(' ');
+                int start = 0;
+                if (ss.Length > 4)
+                    start++;
+
+                var l = map.AppendChild(doc.CreateElement("Line"));
+                l.InnerText = ConvertSectorLatLonToISO(ss[start]) + ConvertSectorLatLonToISO(ss[start + 1]) + "/" + ConvertSectorLatLonToISO(ss[start + 2]) + ConvertSectorLatLonToISO(ss[start + 3]);
+            }
+
+            List<string> high = GetSection(file, "[ARTCC HIGH]");
+            foreach (var line in high)
+            {
+                string[] ss = line.Split(' ');
+                int start = 0;
+                if (ss.Length > 4)
+                    start++;
+
+                var l = map.AppendChild(doc.CreateElement("Line"));
+                l.InnerText = ConvertSectorLatLonToISO(ss[start]) + ConvertSectorLatLonToISO(ss[start + 1]) + "/" + ConvertSectorLatLonToISO(ss[start + 2]) + ConvertSectorLatLonToISO(ss[start + 3]);
+            }
+
+            List<string> low = GetSection(file, "[ARTCC LOW]");
+            foreach (var line in low)
+            {
+                string[] ss = line.Split(' ');
+                int start = 0;
+                if (ss.Length > 4)
+                    start++;
+
+                var l = map.AppendChild(doc.CreateElement("Line"));
+                ((XmlElement)l).SetAttribute("Pattern", "Dotted");
+                l.InnerText = ConvertSectorLatLonToISO(ss[start]) + ConvertSectorLatLonToISO(ss[start + 1]) + "/" + ConvertSectorLatLonToISO(ss[start + 2]) + ConvertSectorLatLonToISO(ss[start + 3]);
+            }
+        }
+
+        static void DoAirspace(List<string> file)
+        {
             XmlDocument doc = new XmlDocument();
-            XmlElement airports = (XmlElement)doc.AppendChild(doc.CreateElement("Airports"));
+            var airspace = doc.AppendChild(doc.CreateElement("Airspace"));
+            DoAirports(doc, airspace, file);
+            //DoAirways(doc, airspace, file);
+            DoInts(doc, airspace, file);
+            XmlTextWriter writer = new XmlTextWriter("Airspace.xml", null);
+            writer.Formatting = Formatting.Indented;
+            doc.Save(writer);
+        }
+
+        static void DoAirports(XmlDocument doc, XmlNode parent, List<string> file)
+        {
+            List<string> airportS = GetSection(file, "[AIRPORT]");
+
+            XmlElement airports = (XmlElement)parent.AppendChild(doc.CreateElement("Airports"));
 
             foreach (string line in airportS)
             {
@@ -69,11 +333,6 @@ namespace SCTtoXML
             }
 
             Console.WriteLine(airportS.Count.ToString() + " Airports Created.");
-
-            fname = fname.Substring(0, fname.IndexOf('.'));
-            XmlTextWriter writer = new XmlTextWriter(fname + "_AIRPORTS" + ".xml", null);
-            writer.Formatting = Formatting.Indented;
-            doc.Save(writer);
         }
 
         static List<string> GetSection(List<string> file, string section)
@@ -81,10 +340,9 @@ namespace SCTtoXML
             return file.SkipWhile(s => !s.Contains(section)).Where(s => s.Trim() != "" && s.Trim() != section).TakeWhile(s => !s.Contains("[")).ToList();
         }
 
-        static void DoAirways(string fname, List<string> file)
+        static void DoAirways(XmlDocument doc, XmlNode parent, List<string> file)
         {
-            XmlDocument doc = new XmlDocument();
-            XmlElement xmlAirways = (XmlElement)doc.AppendChild(doc.CreateElement("Airways"));
+            XmlElement xmlAirways = (XmlElement)parent.AppendChild(doc.CreateElement("Airways"));
 
             string section = "[HIGH AIRWAY]";
             int count = 0;
@@ -119,11 +377,6 @@ namespace SCTtoXML
                         x.InnerText += points.p2 + Environment.NewLine;
                 }
             }
-
-            fname = fname.Substring(0, fname.IndexOf('.'));
-            XmlTextWriter writer = new XmlTextWriter(fname + "_AIRWAYS" + ".xml", null);
-            writer.Formatting = Formatting.Indented;
-            doc.Save(writer);
 
             Console.WriteLine(count.ToString() + " airway lines processed.");
             
@@ -260,13 +513,13 @@ namespace SCTtoXML
             }
         }
 
-        static void DoInts(string fname, List<string> file)
+        static void DoInts(XmlDocument doc, XmlNode parent, List<string> file)
         {
             int count = 0;
             List<string> ints = GetSection(file, "[FIXES]");
             count += ints.Count;
-            XmlDocument doc = new XmlDocument();
-            XmlElement intersections = (XmlElement)doc.AppendChild(doc.CreateElement("Intersections"));
+
+            XmlElement intersections = (XmlElement)parent.AppendChild(doc.CreateElement("Intersections"));
 
             foreach (string line in ints)
             {
@@ -327,13 +580,6 @@ namespace SCTtoXML
             }
             count += ints.Count;
             Console.WriteLine(count.ToString() + " Intersections Created.");
-
-            fname = fname.Substring(0, fname.IndexOf('.'));
-            XmlTextWriter writer = new XmlTextWriter(fname + "_FIXES" + ".xml", null);
-            writer.Formatting = Formatting.Indented;
-            doc.Save(writer);
-
-
         }
 
         static void DoGeo(string fname, List<string> file)
@@ -344,6 +590,15 @@ namespace SCTtoXML
             XmlDocument doc = new XmlDocument();
             XmlElement maps = (XmlElement)doc.AppendChild(doc.CreateElement("Maps"));
             XmlElement map = (XmlElement)maps.AppendChild(doc.CreateElement("Map"));
+
+            fname = fname.Substring(0, fname.IndexOf('.'));
+            List<string> info = GetSection(file, "[INFO]").Where(s => s.Length > 0 && s[0] != ';').ToList();
+            string centre = ConvertSectorLatLonToISO(info[3]) + ConvertSectorLatLonToISO(info[4]);
+
+            map.SetAttribute("Type", "System");
+            map.SetAttribute("Name", $"{fname}_GEO");
+            map.SetAttribute("Center", centre);
+            map.SetAttribute("Priority", "2");
 
             Console.WriteLine("Filter by colour? (Enter Colour Name): ");
             string colour = Console.ReadLine();
@@ -357,15 +612,18 @@ namespace SCTtoXML
                 if (ss.Length < 5)
                     continue;
 
+                int start = 0;
+                if (ss.Length > 5)
+                    start++;
+
                 XmlElement line = (XmlElement)map.AppendChild(doc.CreateElement("Line"));
-                line.InnerText += ConvertSectorLatLonToISO(ss[0]);
-                line.InnerText += ConvertSectorLatLonToISO(ss[1]);
+                line.InnerText += ConvertSectorLatLonToISO(ss[start]);
+                line.InnerText += ConvertSectorLatLonToISO(ss[start+1]);
                 line.InnerText += "/";
-                line.InnerText += ConvertSectorLatLonToISO(ss[2]);
-                line.InnerText += ConvertSectorLatLonToISO(ss[3]);
+                line.InnerText += ConvertSectorLatLonToISO(ss[start+2]);
+                line.InnerText += ConvertSectorLatLonToISO(ss[start+3]);
             }
 
-            fname = fname.Substring(0, fname.IndexOf('.'));
             XmlTextWriter writer = new XmlTextWriter(fname + "_GEO" + ".xml", null);
             writer.Formatting = Formatting.Indented;
             doc.Save(writer);
@@ -374,6 +632,8 @@ namespace SCTtoXML
         static string ConvertSectorLatLonToISO(string splitstring)
         {
             string line = "";
+
+            bool isLon = splitstring.Contains('E') || splitstring.Contains('W');
 
             if (splitstring.Contains('S') || splitstring.Contains('W'))
                 line += "-";
@@ -387,7 +647,10 @@ namespace SCTtoXML
             if (sl.Length != 4)
                 return "";
 
-            line += sl[0].PadLeft(2,'0') + sl[1].PadLeft(2, '0') + sl[2].PadLeft(2, '0') + "." + sl[3];
+            if(isLon)
+                line += sl[0].PadLeft(3, '0') + sl[1].PadLeft(2, '0') + sl[2].PadLeft(2, '0') + "." + sl[3];
+            else
+                line += sl[0].PadLeft(2,'0') + sl[1].PadLeft(2, '0') + sl[2].PadLeft(2, '0') + "." + sl[3];
             return line;
         }
     }
